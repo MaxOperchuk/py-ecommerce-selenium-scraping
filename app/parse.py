@@ -13,23 +13,14 @@ from app.models import Product
 from app.writer import write_products_to_csv
 
 BASE_URL = "https://webscraper.io/"
-HOME_URL = urljoin(BASE_URL, "test-sites/e-commerce/more/")
-
-COMPUTERS_URL = urljoin(BASE_URL, "test-sites/e-commerce/more/computers")
-LAPTOPS_URL = COMPUTERS_URL + "/laptops"
-TABLETS_URL = COMPUTERS_URL + "/tablets"
-
-PHONES_URL = urljoin(BASE_URL, "test-sites/e-commerce/more/phones")
-TOUCHES_URL = PHONES_URL + "/touch"
-
 
 PAGES = {
-    "home.csv": HOME_URL,
-    "computers.csv": COMPUTERS_URL,
-    "phones.csv": PHONES_URL,
-    "touch.csv": TOUCHES_URL,
-    "laptops.csv": LAPTOPS_URL,
-    "tablets.csv": TABLETS_URL
+    "home.csv": urljoin(BASE_URL, "test-sites/e-commerce/more/"),
+    "computers.csv": urljoin(BASE_URL, "test-sites/e-commerce/more/computers"),
+    "phones.csv": urljoin(BASE_URL, "test-sites/e-commerce/more/phones"),
+    "touch.csv": urljoin(BASE_URL, "test-sites/e-commerce/more/phones/touch"),
+    "laptops.csv": urljoin(BASE_URL, "test-sites/e-commerce/more/computers/laptops"),
+    "tablets.csv": urljoin(BASE_URL, "test-sites/e-commerce/more/computers/tablets")
 }
 
 
@@ -40,7 +31,7 @@ def get_page_soup(html: bytes | str) -> BeautifulSoup:
 
 def get_single_product(product: Tag) -> Product:
     title = product.select_one("a.title")["title"]
-    description = product.select_one("p.description")
+    description = product.select_one("p.description").text.replace("\xa0", " ")
     price = product.select_one("h4.price.float-end").text.replace("$", "")
 
     rating = len(product.select("div.ratings span"))
@@ -69,43 +60,43 @@ def click_btn(driver: webdriver, btn_text: str) -> None:
     action.move_to_element(link).click().perform()
 
 
-def get_products_on_paginated_page(url: str) -> BeautifulSoup:
-    driver = webdriver.Chrome()
-    driver.get(url)
+def get_soup_from_paginated_page(url: str) -> BeautifulSoup:
+    with webdriver.Chrome() as driver:
+        driver.get(url)
 
-    click_btn(driver=driver, btn_text="Accept & Continue")
+        click_btn(driver=driver, btn_text="Accept & Continue")
 
-    while True:
-        try:
-            click_btn(driver=driver, btn_text="More")
-        except TimeoutException:
-            break
+        while True:
+            try:
+                click_btn(driver=driver, btn_text="More")
+            except TimeoutException:
+                break
 
-    soup = get_page_soup(driver.page_source)
+        soup = get_page_soup(driver.page_source)
 
-    driver.quit()
+        return soup
 
-    return soup
+
+def parse_single_page(file_name: str, url: str) -> None:
+    response = requests.get(url).content
+    page_soup = get_page_soup(response)
+
+    more_btn = page_soup.select_one(
+        "a.btn.btn-lg.btn-block.btn-primary"
+    )
+
+    if more_btn:
+        page_soup = get_soup_from_paginated_page(url=url)
+
+    product_blocks = page_soup.select("div.col-md-4.col-xl-4.col-lg-4")
+    products = [get_single_product(block) for block in product_blocks]
+
+    write_products_to_csv(output_csv_path=file_name, products=products)
 
 
 def get_all_products() -> None:
     for file_name, url in PAGES.items():
-
-        response = requests.get(url).content
-        page_soup = get_page_soup(response)
-
-        more_btn = page_soup.select_one(
-            "a.btn.btn-lg.btn-block.btn-primary"
-        )
-
-        if more_btn:
-            page_soup = get_products_on_paginated_page(url)
-
-        product_blocks = page_soup.select("div.col-md-4.col-xl-4.col-lg-4")
-
-        products = [get_single_product(block) for block in product_blocks]
-
-        write_products_to_csv(output_csv_path=file_name, products=products)
+        parse_single_page(file_name=file_name, url=url)
 
 
 if __name__ == "__main__":
